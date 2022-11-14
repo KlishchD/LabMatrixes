@@ -7,7 +7,7 @@
 #include <iostream>
 #include "doctest.h"
 
-void calculateLNonFirstColumn(int j, double **A, double **L, double **U, int n) {
+void calculateLNonFirstColumn(int j, double **A, double **L, double **U, int n, bool &error) {
     for (int i = j; i < n; ++i) {
         L[i][j] = A[i][j];
         for (int k = 0; k < j; ++k) {
@@ -16,19 +16,23 @@ void calculateLNonFirstColumn(int j, double **A, double **L, double **U, int n) 
     }
 }
 
-void calculateLFirstColumn(double **A, double **L, int n) {
+void calculateLFirstColumn(double **A, double **L, int n, bool &error) {
     for (int i = 0; i < n; ++i) {
         L[i][0] = A[i][0];
     }
 }
 
-void calculateLColumn(int j, double **A, double **L, double **U, int n) {
-    if (j == 0) calculateLFirstColumn(A, L, n);
-    else calculateLNonFirstColumn(j, A, L, U, n);
+void calculateLColumn(int j, double **A, double **L, double **U, int n, bool &error) {
+    if (j == 0) calculateLFirstColumn(A, L, n, error);
+    else calculateLNonFirstColumn(j, A, L, U, n, error);
 }
 
-void calculateUNonFirstRow(int i, double **A, double **L, double **U, int n) {
+void calculateUNonFirstRow(int i, double **A, double **L, double **U, int n, bool &error) {
     for (int j = i; j < n; ++j) {
+        if (L[i][i] == 0) {
+            error = 1;
+            return;
+        }
         U[i][j] = A[i][j];
         for (int k = 0; k < i; ++k) {
             U[i][j] -= L[i][k] * U[k][j];
@@ -37,15 +41,19 @@ void calculateUNonFirstRow(int i, double **A, double **L, double **U, int n) {
     }
 }
 
-void calculateUFirstRow(double **A, double **U, int n) {
+void calculateUFirstRow(double **A, double **U, int n, bool &error) {
+    if (A[0][0] == 0) {
+        error = 1;
+        return;
+    }
     for (int j = 0; j < n; ++j) {
         U[0][j] = A[0][j] / A[0][0];
     }
 }
 
-void calculateURow(int i, double **A, double **L, double **U, int n) {
-    if (i == 0) calculateUFirstRow(A, U, n);
-    else calculateUNonFirstRow(i, A, L, U, n);
+void calculateURow(int i, double **A, double **L, double **U, int n, bool &error) {
+    if (i == 0) calculateUFirstRow(A, U, n, error);
+    else calculateUNonFirstRow(i, A, L, U, n, error);
 }
 
 double **creteSquareMatrix(int n) {
@@ -87,22 +95,27 @@ void calculateRColumn(int k, double **R, double **L, double **U, int n) {
     delete[] d;
 }
 
-double **calculateInverseMatrix(double **A, int n) {
+double **calculateInverseMatrix(double **A, int n, bool &error) {
     double **L = creteSquareMatrix(n);
     double **U = creteSquareMatrix(n);
     double **R = creteSquareMatrix(n);
 
-    for (int i = 0; i < n; ++i) {
-        calculateLColumn(i, A, L, U, n);
-        calculateURow(i, A, L, U, n);
+    for (int i = 0; i < n && !error; ++i) {
+        calculateLColumn(i, A, L, U, n, error);
+        calculateURow(i, A, L, U, n, error);
     }
 
-    for (int i = 0; i < n; ++i) {
+    for (int i = 0; i < n && !error; ++i) {
         calculateRColumn(i, R, L, U, n);
     }
 
     delete[] L;
     delete[] U;
+
+    if (error) {
+        delete[] R;
+        return nullptr;
+    }
 
     return R;
 }
@@ -133,245 +146,81 @@ double **load(std::fstream &file, int n) {
 int loadSize(std::fstream &file) {
     std::string s;
     std::getline(file, s);
+    std::cout << "::" << s << std::endl;
     return std::stoi(s);
 }
 
-TEST_CASE("test 1") {
-    std::fstream input("../lu_tests/test1/input.txt", std::ios_base::in);
-    std::fstream result("../lu_tests/test1/result.txt", std::ios_base::in);
-
-    int n = loadSize(input);
-    double **A = load(input, n);
-
-    double **R = calculateInverseMatrix(A, n);
-
-    double **expected = load(result, n);
-
+double **multiply(double **A, double **B, int n) {
+    double **R = creteSquareMatrix(n);
     for (int i = 0; i < n; ++i) {
         for (int j = 0; j < n; ++j) {
-            CHECK(expected[i][j] == round(R[i][j] * 10000) / 10000);
+            for (int k = 0; k < n; ++k) {
+                R[i][j] += A[i][k] * B[k][j];
+            }
         }
     }
-
-    input.close();
-    result.close();
-
-    delete[] A;
-    delete[] R;
+    return R;
 }
 
-TEST_CASE("test 2") {
-    std::fstream input("../lu_tests/test2/input.txt", std::ios_base::in);
-    std::fstream result("../lu_tests/test2/result.txt", std::ios_base::in);
+double EPS = 1e-9;
 
-    int n = loadSize(input);
-    double **A = load(input, n);
+TEST_CASE("legitimate matrices") {
+    for (int test = 0; test <= 10; ++test) {
+        std::string caseName = "file_" + std::to_string(test);
+        SUBCASE(caseName.c_str()) {
+            std::fstream input("lu/tests/test" + std::to_string(test) + ".txt", std::ios_base::in);
 
-    double **R = calculateInverseMatrix(A, n);
+            int n = loadSize(input);
+            double **A = load(input, n);
 
-    double **expected = load(result, n);
+            bool error = 0;
 
-    for (int i = 0; i < n; ++i) {
-        for (int j = 0; j < n; ++j) {
-            CHECK(expected[i][j] == round(R[i][j] * 10000) / 10000);
+            double **R = calculateInverseMatrix(A, n, error);
+
+            double **multiplied = multiply(A, R, n);
+
+            for (int i = 0; i < n; ++i) {
+                for (int j = 0; j < n; ++j) {
+                    std::cout << multiplied[i][j] << " ";
+                }
+                std::cout << std::endl;
+            }
+
+            for (int i = 0; i < n; ++i) {
+                CHECK(std::abs(multiplied[i][i] - 1) < EPS);
+                for (int j = 0; j < n; ++j) {
+                    if (i == j) continue;
+                    CHECK(multiplied[i][j] < EPS);
+                }
+            }
+
+            input.close();
+
+            delete[] A;
+            delete[] R;
         }
     }
-
-    input.close();
-    result.close();
-
-    delete[] A;
-    delete[] R;
 }
 
-TEST_CASE("test 3") {
-    std::fstream input("../lu_tests/test3/input.txt", std::ios_base::in);
-    std::fstream result("../lu_tests/test3/result.txt", std::ios_base::in);
+TEST_CASE("non-legitimate matrices") {
+    for (int test = 11; test <= 13; ++test) {
+        std::string caseName = "file_" + std::to_string(test);
+        SUBCASE(caseName.c_str()) {
+            std::fstream input("lu/tests/test" + std::to_string(test) + ".txt", std::ios_base::in);
 
-    int n = loadSize(input);
-    double **A = load(input, n);
+            int n = loadSize(input);
+            double **A = load(input, n);
 
-    double **R = calculateInverseMatrix(A, n);
+            bool error = 0;
 
-    double **expected = load(result, n);
+            double **R = calculateInverseMatrix(A, n, error);
 
-    for (int i = 0; i < n; ++i) {
-        for (int j = 0; j < n; ++j) {
-            CHECK(expected[i][j] == round(R[i][j] * 10000) / 10000);
+            CHECK(error);
+
+            input.close();
+
+            delete[] A;
+            delete[] R;
         }
     }
-
-    input.close();
-    result.close();
-
-    delete[] A;
-    delete[] R;
-}
-
-TEST_CASE("test 4") {
-    std::fstream input("../lu_tests/test4/input.txt", std::ios_base::in);
-    std::fstream result("../lu_tests/test4/result.txt", std::ios_base::in);
-
-    int n = loadSize(input);
-    double **A = load(input, n);
-
-    double **R = calculateInverseMatrix(A, n);
-
-    double **expected = load(result, n);
-
-    for (int i = 0; i < n; ++i) {
-        for (int j = 0; j < n; ++j) {
-            CHECK(expected[i][j] == round(R[i][j] * 10000) / 10000);
-        }
-    }
-
-    input.close();
-    result.close();
-
-    delete[] A;
-    delete[] R;
-}
-
-TEST_CASE("test 5") {
-    std::fstream input("../lu_tests/test5/input.txt", std::ios_base::in);
-    std::fstream result("../lu_tests/test5/result.txt", std::ios_base::in);
-
-    int n = loadSize(input);
-    double **A = load(input, n);
-
-    double **R = calculateInverseMatrix(A, n);
-
-    double **expected = load(result, n);
-
-    for (int i = 0; i < n; ++i) {
-        for (int j = 0; j < n; ++j) {
-            CHECK(expected[i][j] == round(R[i][j] * 10000) / 10000);
-        }
-    }
-
-    input.close();
-    result.close();
-
-    delete[] A;
-    delete[] R;
-}
-
-TEST_CASE("test 6") {
-    std::fstream input("../lu_tests/test6/input.txt", std::ios_base::in);
-    std::fstream result("../lu_tests/test6/result.txt", std::ios_base::in);
-
-    int n = loadSize(input);
-    double **A = load(input, n);
-
-    double **R = calculateInverseMatrix(A, n);
-
-    double **expected = load(result, n);
-
-    for (int i = 0; i < n; ++i) {
-        for (int j = 0; j < n; ++j) {
-            CHECK(expected[i][j] == round(R[i][j] * 10000) / 10000);
-        }
-    }
-
-    input.close();
-    result.close();
-
-    delete[] A;
-    delete[] R;
-}
-
-TEST_CASE("test 7") {
-    std::fstream input("../lu_tests/test7/input.txt", std::ios_base::in);
-    std::fstream result("../lu_tests/test7/result.txt", std::ios_base::in);
-
-    int n = loadSize(input);
-    double **A = load(input, n);
-
-    double **R = calculateInverseMatrix(A, n);
-
-    double **expected = load(result, n);
-
-    for (int i = 0; i < n; ++i) {
-        for (int j = 0; j < n; ++j) {
-            CHECK(expected[i][j] == round(R[i][j] * 10000) / 10000);
-        }
-    }
-
-    input.close();
-    result.close();
-
-    delete[] A;
-    delete[] R;
-}
-
-TEST_CASE("test 8") {
-    std::fstream input("../lu_tests/test8/input.txt", std::ios_base::in);
-    std::fstream result("../lu_tests/test8/result.txt", std::ios_base::in);
-
-    int n = loadSize(input);
-    double **A = load(input, n);
-
-    double **R = calculateInverseMatrix(A, n);
-
-    double **expected = load(result, n);
-
-    for (int i = 0; i < n; ++i) {
-        for (int j = 0; j < n; ++j) {
-            CHECK(expected[i][j] == round(R[i][j] * 10000) / 10000);
-        }
-    }
-
-    input.close();
-    result.close();
-
-    delete[] A;
-    delete[] R;
-}
-
-TEST_CASE("test 9") {
-    std::fstream input("../lu_tests/test9/input.txt", std::ios_base::in);
-    std::fstream result("../lu_tests/test9/result.txt", std::ios_base::in);
-
-    int n = loadSize(input);
-    double **A = load(input, n);
-
-    double **R = calculateInverseMatrix(A, n);
-
-    double **expected = load(result, n);
-
-    for (int i = 0; i < n; ++i) {
-        for (int j = 0; j < n; ++j) {
-            CHECK(expected[i][j] == round(R[i][j] * 10000) / 10000);
-        }
-    }
-
-    input.close();
-    result.close();
-
-    delete[] A;
-    delete[] R;
-}
-
-TEST_CASE("test 10") {
-    std::fstream input("../lu_tests/test10/input.txt", std::ios_base::in);
-    std::fstream result("../lu_tests/test10/result.txt", std::ios_base::in);
-
-    int n = loadSize(input);
-    double **A = load(input, n);
-
-    double **R = calculateInverseMatrix(A, n);
-
-    double **expected = load(result, n);
-
-    for (int i = 0; i < n; ++i) {
-        for (int j = 0; j < n; ++j) {
-            CHECK(expected[i][j] == round(R[i][j] * 10000) / 10000);
-        }
-    }
-
-    input.close();
-    result.close();
-
-    delete[] A;
-    delete[] R;
 }
